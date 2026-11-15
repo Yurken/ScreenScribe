@@ -3,6 +3,8 @@ import AppKit
 import ScreenScribeCore
 
 private let accent = Color(red:0.12,green:0.65,blue:0.69)
+private let toolbarAccent = Color(red:0.02,green:0.23,blue:0.26)
+private let toolbarInk = Color(red:0.08,green:0.12,blue:0.15)
 
 struct GlassSurface: ViewModifier {
     var radius: CGFloat = 24
@@ -147,7 +149,7 @@ struct AnnotationToolbar: View {
     var body: some View {
         VStack(spacing:9) {
             HStack(spacing:4) {
-                Image(systemName:"circle.grid.2x3.fill").foregroundStyle(.tertiary).font(.system(size:13)).padding(.horizontal,5).help("拖动工具条")
+                Image(systemName:"circle.grid.2x3.fill").foregroundStyle(toolbarInk.opacity(0.65)).font(.system(size:13)).padding(.horizontal,5).help("拖动工具条")
                 ForEach(AnnotationTool.allCases) { tool in
                     toolButton(tool.symbol,tool.label+" ("+tool.shortcut.uppercased()+")",selected:document.tool == tool) { controller.selectTool(tool) }
                 }
@@ -195,10 +197,21 @@ struct AnnotationToolbar: View {
                     Toggle(isOn:$document.fillShapes) { Image(systemName:"square.fill").font(.system(size:12)) }.toggleStyle(.button).buttonStyle(.plain).onChange(of:document.fillShapes) { _,_ in controller.applyStyle() }.help("填充形状")
                 }
                 Spacer(minLength:0)
+                Toggle(isOn:$document.straightenShapes) {
+                    Label("形状规整",systemImage:"wand.and.stars").font(.system(size:11,weight:.medium)).padding(.horizontal,8)
+                }
+                .toggleStyle(.button)
+                .buttonStyle(ToolbarButtonStyle(selected:document.straightenShapes))
+                .accessibilityLabel("形状规整")
+                .help("开启后，手绘自动转成直线、正三角形、矩形或圆；也可按住 Shift 临时规整。")
+                .onChange(of:document.straightenShapes) { _,enabled in
+                    if enabled, [.select,.text,.eraser,.blur].contains(document.tool) { controller.selectTool(.pen) }
+                    else { controller.focusCanvas() }
+                }
                 if let message = controller.message { Text(message).font(.system(size:10)).foregroundStyle(accent).lineLimit(1) }
-                else { Text(controller.passThrough ? "鼠标穿透中" : "⇧ 约束形状 · 双击编辑文字").font(.system(size:10)).foregroundStyle(.secondary).lineLimit(1) }
+                else { Text(controller.passThrough ? "鼠标穿透中" : (document.straightenShapes ? "手绘后自动规整" : "按住 ⇧ 临时规整")).font(.system(size:10)).foregroundStyle(toolbarInk).lineLimit(1) }
             }
-        }.padding(.horizontal,14).padding(.vertical,12).modifier(GlassSurface(radius:25)).padding(3).tint(accent)
+        }.padding(.horizontal,16).padding(.vertical,10).foregroundStyle(toolbarInk).tint(toolbarAccent)
     }
     var textFormatting: some View {
         HStack(spacing:6) {
@@ -214,10 +227,28 @@ struct AnnotationToolbar: View {
     }
     var separator: some View { Rectangle().fill(.primary.opacity(0.1)).frame(width:1,height:20).padding(.horizontal,4) }
     func toolButton(_ icon:String,_ help:String,selected:Bool=false,action:@escaping()->Void)->some View {
-        Button(action:action) { Image(systemName:icon).font(.system(size:16,weight:.medium)).foregroundStyle(selected ? accent : Color.primary.opacity(0.8)).frame(width:32,height:32).background(selected ? accent.opacity(0.16) : Color.clear,in:RoundedRectangle(cornerRadius:10)) }.buttonStyle(.plain).help(help).accessibilityLabel(help)
+        Button(action:action) { Image(systemName:icon).font(.system(size:16,weight:.medium)).frame(width:32,height:32) }.buttonStyle(ToolbarButtonStyle(selected:selected)).help(help).accessibilityLabel(help)
     }
     func formatButton(_ icon:String,value:Binding<Bool>)->some View {
         Button { value.wrappedValue.toggle(); controller.applyStyle() } label: { Image(systemName:icon).font(.system(size:12,weight:.semibold)).frame(width:23,height:25).background(value.wrappedValue ? accent.opacity(0.18) : .clear,in:RoundedRectangle(cornerRadius:6)) }.buttonStyle(.plain).help(icon)
+    }
+}
+
+private struct ToolbarButtonStyle: ButtonStyle {
+    var selected = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.vertical,3)
+            .foregroundStyle(selected ? Color.white : toolbarInk.opacity(enabled ? 1 : 0.34))
+            .background(selected ? toolbarAccent : toolbarInk.opacity(hovering && enabled ? 0.08 : 0),in:RoundedRectangle(cornerRadius:11))
+            .contentShape(RoundedRectangle(cornerRadius:11))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.95 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration:0.14),value:configuration.isPressed)
+            .onHover { hovering = $0 }
     }
 }
 

@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 public enum AnnotationTool: String, CaseIterable, Identifiable {
-    case select, pen, highlighter, line, arrow, rectangle, ellipse, text, eraser, blur
+    case select, pen, highlighter, line, arrow, rectangle, triangle, ellipse, text, eraser, blur
 
     public var id: String { rawValue }
     public var label: String {
@@ -13,6 +13,7 @@ public enum AnnotationTool: String, CaseIterable, Identifiable {
         case .line: return "直线"
         case .arrow: return "箭头"
         case .rectangle: return "矩形"
+        case .triangle: return "三角形"
         case .ellipse: return "椭圆"
         case .text: return "文字"
         case .eraser: return "橡皮擦"
@@ -27,6 +28,7 @@ public enum AnnotationTool: String, CaseIterable, Identifiable {
         case .line: return "line.diagonal"
         case .arrow: return "arrow.up.right"
         case .rectangle: return "rectangle"
+        case .triangle: return "triangle"
         case .ellipse: return "circle"
         case .text: return "textformat"
         case .eraser: return "eraser"
@@ -41,6 +43,7 @@ public enum AnnotationTool: String, CaseIterable, Identifiable {
         case .line: return "L"
         case .arrow: return "A"
         case .rectangle: return "R"
+        case .triangle: return "G"
         case .ellipse: return "O"
         case .text: return "T"
         case .eraser: return "E"
@@ -125,8 +128,14 @@ public struct Annotation: Identifiable, Equatable {
         guard rect.insetBy(dx: -padding, dy: -padding).contains(point) else { return false }
         switch tool {
         case .text, .blur: return true
-        case .rectangle:
-            return fillShapes || !rect.insetBy(dx: padding, dy: padding).contains(point)
+        case .rectangle, .triangle:
+            let vertices = shapeVertices
+            if fillShapes, let first = vertices.first {
+                let path = CGMutablePath(); path.move(to: first)
+                vertices.dropFirst().forEach { path.addLine(to: $0) }; path.closeSubpath()
+                if path.contains(point) { return true }
+            }
+            return vertices.indices.contains { Self.distance(point, to: vertices[$0], and: vertices[($0 + 1) % vertices.count]) <= padding }
         case .ellipse:
             let a = max(rect.width / 2, 0.5), b = max(rect.height / 2, 0.5)
             let radial = pow((point.x - rect.midX) / a, 2) + pow((point.y - rect.midY) / b, 2)
@@ -136,6 +145,16 @@ public struct Annotation: Identifiable, Equatable {
             for i in 1..<points.count where Self.distance(point, to: points[i-1], and: points[i]) <= padding { return true }
             return false
         }
+    }
+
+    public var shapeVertices: [NSPoint] {
+        let rect = bounds
+        if tool == .triangle {
+            if points.count == 3 { return points }
+            return [NSPoint(x: rect.midX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.maxY), NSPoint(x: rect.minX, y: rect.maxY)]
+        }
+        if tool == .rectangle, points.count == 4 { return points }
+        return [NSPoint(x: rect.minX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.minY), NSPoint(x: rect.maxX, y: rect.maxY), NSPoint(x: rect.minX, y: rect.maxY)]
     }
 
     public static func distance(_ p: NSPoint, to a: NSPoint, and b: NSPoint) -> CGFloat {
@@ -158,6 +177,7 @@ public struct Annotation: Identifiable, Equatable {
     @Published public var textUnderline = false
     @Published public var textBackground = false
     @Published public var fillShapes = false
+    @Published public var straightenShapes = false
     @Published public var selectedID: UUID?
     @Published public private(set) var annotations: [Annotation] = []
     @Published public private(set) var revision = 0

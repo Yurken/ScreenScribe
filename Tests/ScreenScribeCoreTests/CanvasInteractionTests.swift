@@ -83,4 +83,42 @@ final class CanvasInteractionTests: XCTestCase {
             XCTAssertFalse(canvas.isEditingText)
         }
     }
+
+    func testShapeSwitchAndShiftConvertFreehandAndUndoAsOneStep() async {
+        await MainActor.run {
+            for useSwitch in [false, true] {
+                let (document, canvas, window) = canvas()
+                defer { window.close() }
+                document.straightenShapes = useSwitch
+                canvas.mouseDown(with: event(.leftMouseDown, NSPoint(x: 20, y: 40), on: canvas))
+                for x in stride(from: 30, through: 180, by: 10) {
+                    canvas.mouseDragged(with: event(.leftMouseDragged, NSPoint(x: x, y: x % 20 == 0 ? 41 : 39), on: canvas, shift: !useSwitch))
+                }
+                // Releasing Shift just before the mouse must not discard recognition.
+                canvas.mouseUp(with: event(.leftMouseUp, NSPoint(x: 190, y: 40), on: canvas))
+                XCTAssertEqual(document.annotations.count, 1)
+                XCTAssertEqual(document.annotations[0].tool, .line)
+                XCTAssertEqual(document.annotations[0].points.count, 2)
+                document.undo(); XCTAssertTrue(document.annotations.isEmpty)
+                document.redo(); XCTAssertEqual(document.annotations[0].tool, .line)
+            }
+        }
+    }
+
+    func testTriangleToolShiftCreatesEquilateralAndUsesMouseUpPosition() async {
+        await MainActor.run {
+            let (document, canvas, window) = canvas()
+            defer { window.close() }
+            document.tool = .triangle
+            canvas.mouseDown(with: event(.leftMouseDown, NSPoint(x: 20, y: 20), on: canvas))
+            canvas.mouseDragged(with: event(.leftMouseDragged, NSPoint(x: 80, y: 40), on: canvas, shift: true))
+            canvas.mouseUp(with: event(.leftMouseUp, NSPoint(x: 120, y: 60), on: canvas, shift: true))
+            let triangle = document.annotations[0]
+            XCTAssertEqual(triangle.bounds.width, 100, accuracy: 0.001)
+            XCTAssertEqual(triangle.bounds.height, 100 * sqrt(3) / 2, accuracy: 0.001)
+            let vertices = triangle.shapeVertices
+            XCTAssertEqual(hypot(vertices[0].x - vertices[1].x, vertices[0].y - vertices[1].y), 100, accuracy: 0.001)
+            XCTAssertNotNil(canvas.renderedImage())
+        }
+    }
 }

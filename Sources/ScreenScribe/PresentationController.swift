@@ -164,19 +164,26 @@ final class PresentationController: ObservableObject {
         overlay?.makeKey(); canvas.focusInput()
     }
 
+    func focusToolbar() {
+        guard active, let toolbar else { return }
+        toolbar.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     private func showToolbar(on screen: NSScreen) {
         if toolbar == nil {
-            let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 820, height: 106), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let panel = FloatingPanel(contentRect: NSRect(x: 0, y: 0, width: 1060, height: 120), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             configureOverlay(panel, level: .init(rawValue: NSWindow.Level.statusBar.rawValue + 4))
             panel.isMovableByWindowBackground = true
             panel.hasShadow = true
             panel.hidesOnDeactivate = false
-            panel.contentView = NSHostingView(rootView: AnnotationToolbar(controller: self, document: document))
+            panel.title = "屏注批注工具条"
+            panel.contentView = makeToolbarSurface(AnnotationToolbar(controller: self, document: document))
             toolbar = panel
         }
         let area = screen.visibleFrame
-        let width = min(1000, area.width - 32)
-        toolbar?.setFrame(NSRect(x: area.midX - width / 2, y: area.minY + 24, width: width, height: 112), display: true)
+        let width = min(1060, area.width - 32)
+        toolbar?.setFrame(NSRect(x: area.midX - width / 2, y: area.minY + 24, width: width, height: 120), display: true)
         toolbar?.orderFrontRegardless()
     }
 
@@ -460,7 +467,7 @@ final class CanvasWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
 final class FloatingPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 @MainActor func configureOverlay(_ window: NSWindow, level: NSWindow.Level) {

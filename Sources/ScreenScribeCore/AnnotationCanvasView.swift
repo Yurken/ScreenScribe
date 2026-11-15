@@ -16,6 +16,7 @@ import Combine
 
     private var subscription: AnyCancellable?
     private var draft: Annotation?
+    private var constrainGesture = false
     private var dragStart: NSPoint?
     private var originalSelection: Annotation?
     private var resizing = false
@@ -57,7 +58,7 @@ import Combine
             backgroundImage.draw(in: bounds, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
         }
         for annotation in document.annotations where annotation.id != editingID { draw(annotation) }
-        if let draft { draw(draft) }
+        if let draft { draw(regularized(draft)) }
         if includingSelection, let selected = document.selectedAnnotation, selected.id != editingID { drawSelection(selected) }
         if includingSelection, isCropping { drawCropSelection() }
     }
@@ -95,9 +96,16 @@ import Combine
                 head.line(to: NSPoint(x: last.x-size*cos(angle+0.43), y: last.y-size*sin(angle+0.43)))
                 head.close(); head.fill()
             }
-        case .rectangle, .ellipse:
-            let shape = annotation.tool == .rectangle ? NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3) : NSBezierPath(ovalIn: rect)
+        case .rectangle, .triangle, .ellipse:
+            let shape: NSBezierPath
+            if annotation.tool == .ellipse { shape = NSBezierPath(ovalIn: rect) }
+            else {
+                shape = NSBezierPath()
+                let vertices = annotation.shapeVertices
+                shape.move(to: vertices[0]); vertices.dropFirst().forEach { shape.line(to: $0) }; shape.close()
+            }
             shape.lineWidth = annotation.strokeWidth
+            shape.lineJoinStyle = .round
             if annotation.fillShapes { annotation.color.withAlphaComponent(0.22).setFill(); shape.fill() }
             annotation.color.setStroke(); shape.stroke()
         case .text:
@@ -159,6 +167,7 @@ import Combine
         finishEditing()
         window?.makeFirstResponder(self)
         dragStart = point
+        constrainGesture = event.modifierFlags.contains(.shift)
         switch document.tool {
         case .select:
             if let hit = document.annotation(at: point) {
@@ -186,6 +195,7 @@ import Combine
         let point = convert(event.locationInWindow, from: nil)
         if isCropping, let cropStart { cropRect = normalizedRect(cropStart, point); needsDisplay = true; return }
         guard let start = dragStart else { return }
+        constrainGesture = constrainGesture || event.modifierFlags.contains(.shift)
         if let originalSelection {
             if resizing {
                 var target = originalSelection.bounds
@@ -197,7 +207,7 @@ import Combine
         else if var value = draft {
             if value.tool == .pen || value.tool == .highlighter {
                 if let last = value.points.last, hypot(point.x-last.x, point.y-last.y) >= 0.5 { value.points.append(point) }
-            } else { value.points = [start, constrained(point, from: start, tool: value.tool, shift: event.modifierFlags.contains(.shift))] }
+            } else { value.points = [start, constrained(point, from: start, tool: value.tool, shift: constrainGesture || document.straightenShapes)] }
             draft = value
         }
         needsDisplay = true
@@ -210,12 +220,34 @@ import Combine
             if let result, result.width > 2, result.height > 2 { onCrop?(result) }
             return
         }
-        if let value = draft {
+        constrainGesture = constrainGesture || event.modifierFlags.contains(.shift)
+        if var value = draft {
+            let point = convert(event.locationInWindow, from: nil)
+            if value.tool == .pen || value.tool == .highlighter {
+                if let last = value.points.last, hypot(point.x - last.x, point.y - last.y) >= 0.5 { value.points.append(point) }
+            } else if let start = dragStart {
+                value.points = [start, constrained(point, from: start, tool: value.tool, shift: constrainGesture || document.straightenShapes)]
+            }
+            value = regularized(value)
             if value.tool == .pen || value.tool == .highlighter || value.bounds.width > 2 || value.bounds.height > 2 { document.add(value) }
             draft = nil
         }
         if originalSelection != nil || document.tool == .eraser { document.commitTransaction() }
-        originalSelection = nil; dragStart = nil; resizing = false; needsDisplay = true
+        originalSelection = nil; dragStart = nil; resizing = false; constrainGesture = false; needsDisplay = true
+    }
+
+    public override func flagsChanged(with event: NSEvent) {
+        if draft != nil, event.modifierFlags.contains(.shift) { constrainGesture = true; needsDisplay = true }
+    }
+
+    private func regularized(_ value: Annotation) -> Annotation {
+        guard constrainGesture || document.straightenShapes else { return value }
+        if value.tool == .highlighter, let first = value.points.first, let last = value.points.last {
+            var line = value
+            line.points = [first, constrained(last, from: first, tool: .line, shift: true)]
+            return line
+        }
+        return ShapeRecognizer.recognize(value) ?? value
     }
 
     private func erase(at point: NSPoint) {
@@ -230,6 +262,10 @@ import Combine
         if tool == .line || tool == .arrow {
             let angle = (atan2(dy, dx) / (.pi/4)).rounded() * (.pi/4), length = hypot(dx, dy)
             return NSPoint(x: start.x+length*cos(angle), y: start.y+length*sin(angle))
+        }
+        if tool == .triangle {
+            let width = max(abs(dx), abs(dy) * 2 / sqrt(3))
+            return NSPoint(x: start.x + (dx < 0 ? -width : width), y: start.y + (dy < 0 ? -1 : 1) * width * sqrt(3) / 2)
         }
         let side = max(abs(dx), abs(dy))
         return NSPoint(x: start.x + (dx < 0 ? -side : side), y: start.y + (dy < 0 ? -side : side))

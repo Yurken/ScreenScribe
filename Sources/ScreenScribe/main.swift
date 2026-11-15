@@ -12,6 +12,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let appMenu = NSMenuItem()
         let submenu = NSMenu()
+        let toolbarItem = submenu.addItem(withTitle: "批注工具条", action: #selector(focusToolbar), keyEquivalent: "t")
+        toolbarItem.keyEquivalentModifierMask = [.command, .option]
+        toolbarItem.target = self
+        submenu.addItem(.separator())
         submenu.addItem(withTitle: "退出屏注", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenu.submenu = submenu
         menu.addItem(appMenu)
@@ -66,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openPanel()
         return true
     }
+
+    @objc private func focusToolbar() { controller.focusToolbar() }
 
     private func openPanel() {
         guard let button = status.button else { return }
