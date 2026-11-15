@@ -29,7 +29,9 @@
 | Debug / Release 构建 | 通过，Apple Silicon arm64 |
 | 22 项 XCTest | 覆盖历史、几何、原生鼠标事件、文字焦点、Retina 裁剪、像素遮挡、形状规整及录屏计时 |
 | ZIP 解压完整性 | 通过 |
-| 解压后 `codesign --verify --strict` | 通过，本机 ad-hoc 签名；未进行 Apple 公证 |
+| 本机 `codesign --verify --deep --strict` | 通过，固定 Apple Development 证书签名；未进行 Apple 公证；CI 产物使用显式 ad-hoc 测试签名 |
+| 20 项签名与安装测试 | 覆盖证书固定、缺失及歧义处理、临时签名降级拦截、显式身份迁移、双向签名验证、运行中拒绝安装、备份及失败回滚 |
+| 更新后的屏幕授权保留 | 旧临时签名迁移授权一次后，连续安装两个 CDHash 不同、原生签名要求相同的构建；普通升级后直接冻结成功，未再次调整权限；麦克风授权保留尚未实测 |
 | 原生应用交互 | 已在本机验证权限、冻结、画线、形状规整、撤销及工具条可读性；其余场景按下方清单复核 |
 | 录屏计时与保存 | 约 97 秒无音频 MP4 实录通过；浮窗与工具条持续计时，停止后文件可完整解码，批注进入录像且计时浮窗被排除 |
 | GitHub Actions | 推送后自动执行，状态见 [Actions](https://github.com/Yurken/ScreenScribe/actions) |

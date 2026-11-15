@@ -12,14 +12,15 @@
 git clone https://github.com/Yurken/ScreenScribe.git
 cd ScreenScribe
 scripts/build.sh
-open dist/ScreenScribe.app
+scripts/install.sh
+open /Applications/ScreenScribe.app
 ```
 
 启动后从菜单栏打开控制面板。首次使用冻结画面、截图、放大镜或录屏时，在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」允许屏注访问；系统要求时重新打开应用。只有选中录制麦克风时才请求麦克风权限。
 
-如果权限开关已打开，重新启动后仍无法捕获画面，请从权限列表移除旧的 ScreenScribe，再使用「＋」添加 `/Applications/ScreenScribe.app`，并完全退出后重新打开。临时签名的不同构建可能被系统视为不同应用；建议始终从「应用程序」运行同一份副本。实时批注、白板和黑板无需屏幕录制权限。
+正常更新应复用同一签名身份并保留已有授权。如果以前使用临时签名，首次迁移到固定证书时需要为新身份重新授权一次；之后使用下述构建和安装流程。实时批注、白板和黑板无需屏幕录制权限。
 
-默认构建使用本机临时签名，未使用 Apple Developer ID 签名，也未经过 Apple 公证。可直接使用源码构建，或在确认来源后按系统提示允许首次打开。
+本机默认使用钥匙串中的固定代码签名证书，不再默认使用临时签名。需要有效的 Apple Development、Mac Developer 或 Developer ID Application 身份；签名不等于 Apple 公证。
 
 ## 功能
 
@@ -40,7 +41,7 @@ open dist/ScreenScribe.app
 
 当前覆盖 macOS 桌面的主要演示流程。iPhone 遥控、远程画板、背景音乐和 PIN 锁定尚未实现。参考产品的功能对应与验证边界见 [功能对照](docs/ScreenMark-comparison.md)。
 
-已通过 Debug / Release 构建、22 项测试和本机代码签名检查，并在本机验证屏幕授权、冻结批注、画线及退出重开后的授权保留。已完成约 97 秒的无音频 MP4 实录验证：浮窗与工具条计时更新、停止保存、完整视频解码和批注画面变化均通过，计时浮窗未进入录像。安装包为 Apple Silicon 版本。输入法候选框、多显示器及录屏声音仍待进一步验证。
+已通过 Debug / Release 构建、22 项 Swift 测试、20 项签名与安装测试和本机代码签名检查，并在本机验证屏幕授权、冻结批注、画线及退出重开后的授权保留。两个哈希不同、固定证书签名的构建连续升级后，屏幕捕获直接成功，无需再次授权。已完成约 97 秒的无音频 MP4 实录验证：浮窗与工具条计时更新、停止保存、完整视频解码和批注画面变化均通过，计时浮窗未进入录像。安装包为 Apple Silicon 版本。输入法候选框、多显示器及录屏声音仍待进一步验证。
 
 ## 快捷键
 
@@ -76,7 +77,36 @@ scripts/package.sh          # ZIP
 scripts/package.sh --dmg    # ZIP + DMG
 ```
 
-输出位于 `dist/`。可设置 `SCREENSCRIBE_VERSION`、`SCREENSCRIBE_BUILD_NUMBER` 和 `SCREENSCRIBE_SIGNING_IDENTITY`。不设置签名身份时使用 ad-hoc 签名；设置 Developer ID 身份后启用 hardened runtime，公证仍需单独配置。
+输出位于 `dist/`。可设置 `SCREENSCRIBE_VERSION`、`SCREENSCRIBE_BUILD_NUMBER` 和 `SCREENSCRIBE_SIGNING_IDENTITY`。证书签名启用 hardened runtime；Developer ID 构建带安全时间戳，公证仍需单独配置。
+
+### 更新时保留屏幕和麦克风授权
+
+macOS 使用应用的签名要求识别授权对象；ad-hoc 签名默认绑定每次变化的构建哈希，不能提供稳定的更新身份。见 [Apple：代码签名要求](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements/)。
+
+首次本机构建会自动选择唯一可用的应用签名证书，并把选择保存到 `~/Library/Application Support/ScreenScribe/signing.json`（仅本机，不含私钥，不进入仓库）。后续构建固定使用它；证书不可用时直接报错，不会退回临时签名。多证书环境可显式配置：
+
+```bash
+security find-identity -v -p codesigning
+python3 scripts/signing.py configure --identity <证书的完整SHA1>
+```
+
+普通更新先保存批注、停止录屏并退出屏注，再执行：
+
+```bash
+scripts/build.sh release
+scripts/install.sh
+open /Applications/ScreenScribe.app
+```
+
+安装脚本检查新旧应用的真实代码签名要求，并双向验证签名兼容性。身份不一致或更新包使用临时签名时拒绝替换；通过后先创建回滚 ZIP，再更新到同一安装位置。回滚 ZIP 位于 `~/Library/Application Support/ScreenScribe/backups/`，不会产生另一份已注册的 `.app` 副本。
+
+仅在从旧临时签名迁移到固定证书、或明确更换签名身份时，使用 `scripts/install.sh --migrate-signing`。这类迁移需要一次新的系统授权，不能沿用旧身份的授权。正常更新不要使用此选项，也不应重置 TCC。更换开发团队、证书身份或应用标识不属于同一身份的普通更新。
+
+`SCREENSCRIBE_SIGNING_CONFIG` 可指定独立的本机配置路径。CI 显式设置 `SCREENSCRIBE_SIGNING_IDENTITY=-` 生成 ad-hoc 测试产物；这些包不能直接替代保留本机授权的固定证书更新。面向其他 Mac 的正式分发应使用同一开发团队的 Developer ID 签名和公证，不能提交或共享个人私钥。
+
+签名及安装流程测试：`python3 -m unittest discover -s scripts/tests -v`。
+
+本机已完成一次从旧临时签名到固定证书的迁移授权，并随后用普通安装流程从构建 1 升级到构建 2。两份应用的 CDHash 不同、原生 designated requirement 相同，双向签名验证通过；第二个构建可直接冻结画面，期间未重新添加或切换系统隐私授权。此结果验证屏幕访问授权保留；麦克风授权尚未进行同样的连续升级实测。
 
 `Sources/ScreenScribeCore` 保存批注模型、历史记录、几何运算和画布；`Sources/ScreenScribe` 保存窗口、控制面板、系统快捷键、屏幕捕获及录制。GitHub Actions 在推送和 PR 时构建、测试并保存 ZIP；推送 `v*` 标签会生成 GitHub Release。
 

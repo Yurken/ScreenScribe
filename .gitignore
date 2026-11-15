@@ -6,3 +6,6 @@ dist/
 *.xcuserdata/
 *.dSYM/
 *.log
+__pycache__/
+*.py[cod]
+.signing.local.json

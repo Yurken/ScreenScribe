@@ -44,13 +44,6 @@ plutil -lint "$APP/Contents/Info.plist"
 # Finder metadata inherited from copied files is not part of the app signature.
 xattr -cr "$APP"
 
-# A Developer ID identity can be supplied for distribution. The default is a
-# reproducible local ad-hoc signature; this does not claim Apple notarization.
-SIGNING_IDENTITY="${SCREENSCRIBE_SIGNING_IDENTITY:--}"
-if [[ "$SIGNING_IDENTITY" == "-" ]]; then
-    codesign --force --entitlements "$ROOT/Resources/ScreenScribe.entitlements" --sign - "$APP"
-else
-    codesign --force --options runtime --entitlements "$ROOT/Resources/ScreenScribe.entitlements" --timestamp --sign "$SIGNING_IDENTITY" "$APP"
-fi
-codesign --verify --strict "$APP"
+# Pin a real certificate locally; never silently fall back to per-build ad-hoc identity.
+python3 "$ROOT/scripts/signing.py" sign "$APP"
 echo "$APP"

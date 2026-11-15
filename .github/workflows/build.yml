@@ -22,12 +22,16 @@ jobs:
         run: swift --version
       - name: Test annotation engine
         run: swift test
+      - name: Test signing and update guards
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Set release version
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: echo "SCREENSCRIBE_VERSION=${RELEASE_TAG#v}" >> "$GITHUB_ENV"
-      - name: Package signed local app
+      - name: Package explicit ad-hoc CI test app
+        env:
+          SCREENSCRIBE_SIGNING_IDENTITY: '-'
         run: scripts/package.sh
       - name: Preserve app archive
         uses: actions/upload-artifact@v4
