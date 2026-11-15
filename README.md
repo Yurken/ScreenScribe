@@ -70,16 +70,11 @@ scripts/package.sh --dmg    # ZIP + DMG
 
 `Sources/ScreenScribeCore` 保存批注模型、历史记录、几何运算和画布；`Sources/ScreenScribe` 保存窗口、控制面板、系统快捷键、屏幕捕获及录制。GitHub Actions 在推送和 PR 时构建、测试并保存 ZIP；推送 `v*` 标签会生成 GitHub Release。
 
-## 首次上传到公开仓库
+## 仓库与发布
 
-在已完成本地提交的项目目录中运行：
+源码托管于 [Yurken/ScreenScribe](https://github.com/Yurken/ScreenScribe)。安装包可在 [Releases](https://github.com/Yurken/ScreenScribe/releases) 下载，构建与测试状态见 [GitHub Actions](https://github.com/Yurken/ScreenScribe/actions)。
 
-```bash
-gh repo create ScreenScribe --public --source=. --push
-git push origin v0.1.0       # 可选：触发 Release 工作流
-```
-
-当前交付包含本地 Git 历史，尚未创建或上传远程仓库。GitHub Actions 工作流已配置，尚未在远程执行。
+推送 `v*` 版本标签后，GitHub Actions 会自动测试、打包并发布对应版本。
 
 ## 数据与许可
 
