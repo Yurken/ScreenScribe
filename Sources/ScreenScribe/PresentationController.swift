@@ -37,20 +37,16 @@ final class PresentationController: ObservableObject {
     @Published var autoFreeze = true { didSet { UserDefaults.standard.set(autoFreeze, forKey: "autoFreeze") } }
     @Published var hideDesktop = false { didSet { updateDesktopCover() } }
     @Published var message: String?
-    @Published var breakMinutes = 5.0
-    @Published private(set) var breakRemaining: TimeInterval = 0
     var closePanel: (() -> Void)?
     var showPanel: (() -> Void)?
-    var recordingChanged: ((Bool) -> Void)?
+    var recordingChanged: ((RecordingPhase, String) -> Void)?
     private(set) var overlay: CanvasWindow?
     private(set) var toolbar: NSPanel?
     private var canvas: AnnotationCanvasView?
     private var effects: CursorEffectsView?
     private var effectWindow: NSWindow?
     private var snipView: SnipSelectionView?
-    private var breakWindow: NSWindow?
-    private var breakTimer: Timer?
-    private var breakDeadline: Date?
+    private var recordingPanel: NSPanel?
     private var desktopCovers: [NSWindow] = []
     private var localMonitor: Any?
     private var pointerTimer: Timer?
@@ -70,8 +66,19 @@ final class PresentationController: ObservableObject {
             guard let self else { return event }
             return self.routeKey(event)
         }
-        recording.$isRecording.removeDuplicates().sink { [weak self] in self?.recordingChanged?($0) }.store(in: &subscriptions)
-        recording.$lastError.compactMap { $0 }.sink { [weak self] error in self?.notify(error) }.store(in: &subscriptions)
+        recording.$phase.removeDuplicates()
+            .sink { [weak self] phase in
+                guard let self else { return }
+                self.recordingChanged?(phase, self.recording.clockText)
+                if phase == .idle { self.recordingPanel?.orderOut(nil) }
+                else if self.recordingPanel?.isVisible == false { self.recordingPanel?.orderFrontRegardless() }
+            }.store(in: &subscriptions)
+        recording.$elapsed.map { RecordingClock.formatted($0) }.removeDuplicates()
+            .sink { [weak self] clock in
+                guard let self else { return }
+                self.recordingChanged?(self.recording.phase, clock)
+            }.store(in: &subscriptions)
+        recording.$lastError.compactMap { $0 }.sink { [weak self] error in self?.notify(error); self?.showPanel?() }.store(in: &subscriptions)
         capture.onLiveError = { [weak self] error in self?.lens = false; self?.notify(error.localizedDescription); self?.updateEffects() }
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 45, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updatePointer() }
@@ -90,7 +97,8 @@ final class PresentationController: ObservableObject {
         hotkeys.unregister()
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
-        pointerTimer?.invalidate(); breakTimer?.invalidate()
+        pointerTimer?.invalidate()
+        recordingPanel?.orderOut(nil)
         messageTask?.cancel()
         desktopCovers.forEach { $0.orderOut(nil) }
         Task { await capture.stopLiveCapture() }
@@ -100,7 +108,7 @@ final class PresentationController: ObservableObject {
     static var mouseScreen: NSScreen {
         NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main ?? NSScreen.screens[0]
     }
-    var ownWindows: [NSWindow] { [overlay, toolbar, effectWindow, breakWindow].compactMap { $0 } }
+    var ownWindows: [NSWindow] { [overlay, toolbar, effectWindow, recordingPanel].compactMap { $0 } }
 
     func handle(_ action: GlobalAction) {
         switch action {
@@ -165,8 +173,8 @@ final class PresentationController: ObservableObject {
     }
 
     func focusToolbar() {
-        guard active, let toolbar else { return }
-        toolbar.makeKeyAndOrderFront(nil)
+        if active, let toolbar { toolbar.makeKeyAndOrderFront(nil) }
+        else if recording.phase != .idle { recordingPanel?.makeKeyAndOrderFront(nil) }
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -212,7 +220,6 @@ final class PresentationController: ObservableObject {
 
     func escape() {
         if snipView != nil { snipView?.removeFromSuperview(); snipView = nil; focusCanvas(); return }
-        if breakWindow != nil { endBreak(); return }
         if document.tool == .text { canvas?.finishEditing(); document.tool = .pen; focusCanvas() }
         else { hideSession() }
     }
@@ -220,10 +227,9 @@ final class PresentationController: ObservableObject {
     private func routeKey(_ event: NSEvent) -> NSEvent? {
         if event.window?.firstResponder is RecorderButton { return event }
         let inCanvas = event.window === overlay || event.window === toolbar
-        let inBreak = breakWindow != nil && event.window === breakWindow
-        guard inCanvas || inBreak else { return event }
+        guard inCanvas else { return event }
         if let editor = event.window?.firstResponder as? NSTextView, editor.hasMarkedText() { return event }
-        if event.keyCode == 53, active || inBreak { escape(); return nil }
+        if event.keyCode == 53, active { escape(); return nil }
         guard active, !passThrough else { return event }
         if event.window?.firstResponder is NSTextView { return event }
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
@@ -307,7 +313,7 @@ final class PresentationController: ObservableObject {
         panel.nameFieldStringValue = "ScreenScribe-\(Self.timestamp()).mp4"
         panel.level = .init(rawValue: NSWindow.Level.statusBar.rawValue + 6)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let target = screen
+        let target = active ? screen : Self.mouseScreen
         // Keep an existing movie intact until the new recording has finalized.
         let destination: URL
         if FileManager.default.fileExists(atPath: url.path) {
@@ -316,9 +322,11 @@ final class PresentationController: ObservableObject {
         } else { destination = url }
         // Create the toolbar before building the recording exclusion filter.
         if toolbar == nil { showToolbar(on: target); if !active { toolbar?.orderOut(nil) } }
+        prepareRecordingPanel(on: target)
         Task {
-            do { try await recording.start(screen: target, url: destination, includeSystemAudio: includeSystemAudio, includeMicrophone: includeMicrophone, excluding: [toolbar].compactMap { $0 }); notify("开始录屏") }
+            do { try await recording.start(screen: target, url: destination, includeSystemAudio: includeSystemAudio, includeMicrophone: includeMicrophone, excluding: [toolbar, recordingPanel].compactMap { $0 }); notify("开始录屏") }
             catch {
+                if ScreenCaptureService.isPermissionDenied(error) { reportCaptureError(error); return }
                 let alert = NSAlert(); alert.messageText = "无法开始录屏"; alert.informativeText = error.localizedDescription; alert.runModal()
             }
         }
@@ -327,6 +335,21 @@ final class PresentationController: ObservableObject {
     func stopRecording() async {
         do { if let url = try await recording.stop() { notify("已保存 \(url.lastPathComponent)") } }
         catch { notify("录屏保存失败：\(error.localizedDescription)") }
+    }
+
+    private func prepareRecordingPanel(on screen: NSScreen) {
+        if recordingPanel == nil {
+            let panel = FloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            configureOverlay(panel, level: .init(rawValue: NSWindow.Level.statusBar.rawValue + 5))
+            panel.title = "录屏状态"
+            panel.isMovableByWindowBackground = true
+            panel.hidesOnDeactivate = false
+            panel.hasShadow = true
+            panel.contentView = makeToolbarSurface(RecordingHUD(recording: recording) { [weak self] in self?.toggleRecording() })
+            recordingPanel = panel
+        }
+        let area = screen.visibleFrame
+        recordingPanel?.setFrame(NSRect(x: area.maxX - 358, y: area.maxY - 112, width: 340, height: 94), display: true)
     }
 
     func setLens(_ enabled: Bool) async {
@@ -339,7 +362,7 @@ final class PresentationController: ObservableObject {
         lensScreen = target
         ensureEffects(on: target)
         do {
-            try await capture.startLiveCapture(screen: target, excluding: [toolbar, effectWindow, breakWindow].compactMap { $0 }) { [weak self] image in
+            try await capture.startLiveCapture(screen: target, excluding: [toolbar, effectWindow, recordingPanel].compactMap { $0 }) { [weak self] image in
                 guard let self, self.lensRequest == request else { return }
                 self.effects?.image = image; self.effects?.needsDisplay = true
             }
@@ -398,34 +421,6 @@ final class PresentationController: ObservableObject {
             }
             window.orderFrontRegardless(); desktopCovers.append(window)
         }
-    }
-
-    func startBreak() {
-        closePanel?()
-        endBreak(restore: false)
-        let target = active ? screen : Self.mouseScreen
-        overlay?.orderOut(nil); toolbar?.orderOut(nil)
-        let window = CanvasWindow(contentRect: target.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        configureOverlay(window, level: .init(rawValue: NSWindow.Level.statusBar.rawValue + 5))
-        window.contentView = NSHostingView(rootView: BreakScreen(controller: self))
-        breakRemaining = max(1, breakMinutes * 60)
-        breakDeadline = Date().addingTimeInterval(breakRemaining)
-        breakWindow = window
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        breakTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, let deadline = self.breakDeadline else { return }
-                self.breakRemaining = max(0, deadline.timeIntervalSinceNow)
-                if self.breakRemaining <= 0 { NSSound.beep(); self.endBreak() }
-            }
-        }
-    }
-
-    func endBreak(restore: Bool = true) {
-        breakTimer?.invalidate(); breakTimer = nil; breakDeadline = nil
-        breakWindow?.orderOut(nil); breakWindow = nil; breakRemaining = 0
-        if restore, active { overlay?.orderFrontRegardless(); showToolbar(on: screen); focusCanvas() }
     }
 
     func notify(_ text: String) {

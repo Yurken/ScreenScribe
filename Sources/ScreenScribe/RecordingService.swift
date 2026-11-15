@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 import ScreenCaptureKit
+import ScreenScribeCore
 
 /// SCRecordingOutput writes screen, system audio and microphone directly to a local MP4 file.
 @MainActor
@@ -9,14 +10,16 @@ final class RecordingService: ObservableObject {
     @Published private(set) var isRecording = false
     @Published private(set) var isBusy = false
     @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var phase: RecordingPhase = .idle
     @Published var lastError: String?
+    var clockText: String { RecordingClock.formatted(elapsed) }
 
     private var stream: SCStream?
     private var output: SCRecordingOutput?
     private var callbacks: RecordingCallbacks?
     private var outputURL: URL?
     private var timer: Timer?
-    private var startedAt: Date?
+    private var clock = RecordingClock()
     private var finishContinuation: CheckedContinuation<Void, Error>?
     private var finishTimeout: Task<Void, Never>?
     private var completed = false
@@ -28,7 +31,12 @@ final class RecordingService: ObservableObject {
         guard !isRecording, !isBusy, stream == nil else { throw CaptureError.recordingInProgress }
         guard !FileManager.default.fileExists(atPath: url.path) else { throw CaptureError.destinationExists }
         isBusy = true
-        defer { isBusy = false }
+        elapsed = 0
+        phase = .starting
+        defer {
+            isBusy = false
+            if phase == .starting { releaseSession() }
+        }
         lastError = nil
         let session = UUID()
         sessionID = session
@@ -103,6 +111,9 @@ final class RecordingService: ObservableObject {
             return nil
         }
         isBusy = true
+        phase = .saving
+        clock.stop(at: ProcessInfo.processInfo.systemUptime)
+        elapsed = clock.elapsed
         timer?.invalidate()
         timer = nil
         let url = outputURL
@@ -137,12 +148,14 @@ final class RecordingService: ObservableObject {
     private func didStart() {
         guard !isRecording else { return }
         isRecording = true
-        startedAt = Date()
+        phase = .recording
+        clock.start(at: ProcessInfo.processInfo.systemUptime)
         timer?.invalidate()
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, let startedAt = self.startedAt else { return }
-                self.elapsed = Date().timeIntervalSince(startedAt)
+                guard let self, self.phase == .recording else { return }
+                self.clock.update(at: ProcessInfo.processInfo.systemUptime)
+                self.elapsed = self.clock.elapsed
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -153,6 +166,8 @@ final class RecordingService: ObservableObject {
         guard !completed else { return }
         completed = true
         completionError = error
+        clock.stop(at: ProcessInfo.processInfo.systemUptime)
+        elapsed = clock.elapsed
         isRecording = false
         timer?.invalidate()
         timer = nil
@@ -169,9 +184,10 @@ final class RecordingService: ObservableObject {
 
     private func releaseSession() {
         isRecording = false
+        phase = .idle
         timer?.invalidate()
         timer = nil
-        startedAt = nil
+        clock = RecordingClock()
         stream = nil
         output = nil
         callbacks = nil

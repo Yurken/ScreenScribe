@@ -69,13 +69,6 @@ struct ControlPanel: View {
                 effectTile("放大镜","plus.magnifyingglass",active:controller.lens) { Task { await controller.setLens(!controller.lens) } }
             }
             RecordingControls(controller:controller,recording:controller.recording)
-            HStack {
-                Image(systemName:"cup.and.saucer").foregroundStyle(.secondary)
-                Text("课间休息").font(.system(size:12,weight:.medium))
-                Spacer()
-                Stepper(value:$controller.breakMinutes,in:1...120,step:1) { Text("\(Int(controller.breakMinutes)) 分钟").font(.system(size:11)).monospacedDigit() }.frame(width:130)
-                Button("开始") { controller.startBreak() }.controlSize(.small)
-            }.padding(12).modifier(GlassSurface(radius:15))
             if controller.active {
                 Button("\(controller.active ? "隐藏" : "显示")批注 · 保留内容") { controller.toggleSession(); controller.closePanel?() }.font(.caption).buttonStyle(.plain).foregroundStyle(.secondary)
             }
@@ -115,18 +108,95 @@ struct RecordingControls: View {
         HStack(spacing:10) {
             Button { controller.toggleRecording() } label: {
                 HStack(spacing:7) {
-                    Image(systemName:recording.isRecording ? "stop.circle.fill" : "record.circle").foregroundStyle(.red)
-                    Text(recording.isRecording ? "停止 · \(clock)" : "录屏").font(.system(size:12,weight:.semibold)).monospacedDigit()
+                    if recording.phase == .starting || recording.phase == .saving { ProgressView().controlSize(.small) }
+                    else { Image(systemName:recording.isRecording ? "stop.circle.fill" : "record.circle").foregroundStyle(.red) }
+                    VStack(alignment:.leading,spacing:3) {
+                        Text(recording.phase == .recording ? "停止录屏" : recording.phase.title).font(.system(size:12,weight:.semibold))
+                        if recording.phase != .idle { Text(recording.clockText).font(.system(size:12,weight:.medium,design:.monospaced)).monospacedDigit() }
+                    }
                 }
             }.buttonStyle(.plain).disabled(recording.isBusy)
             Spacer()
-            Toggle(isOn:$controller.includeSystemAudio) { Image(systemName:"speaker.wave.2").help("录制系统声音") }.toggleStyle(.checkbox).labelsHidden().help("系统声音")
+            Toggle(isOn:$controller.includeSystemAudio) { Image(systemName:"speaker.wave.2").help("录制系统声音") }.toggleStyle(.checkbox).labelsHidden().help("系统声音").disabled(recording.phase != .idle)
             Image(systemName:"speaker.wave.2").foregroundStyle(controller.includeSystemAudio ? accent : .secondary).font(.caption)
-            Toggle(isOn:$controller.includeMicrophone) { Text("麦克风") }.toggleStyle(.checkbox).labelsHidden().help("麦克风")
+            Toggle(isOn:$controller.includeMicrophone) { Text("麦克风") }.toggleStyle(.checkbox).labelsHidden().help("麦克风").disabled(recording.phase != .idle)
             Image(systemName:"mic").foregroundStyle(controller.includeMicrophone ? accent : .secondary).font(.caption)
         }.padding(13).modifier(GlassSurface(radius:15))
     }
-    var clock:String { String(format:"%02d:%02d",Int(recording.elapsed)/60,Int(recording.elapsed)%60) }
+}
+
+private struct RecordingReadout: View {
+    @ObservedObject var recording: RecordingService
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var compact = false
+
+    var body: some View {
+        HStack(spacing:8) {
+            if recording.phase == .recording {
+                Circle().fill(.red).frame(width:8,height:8)
+                    .opacity(reduceMotion || Int(recording.elapsed) % 2 == 0 ? 1 : 0.4)
+                    .animation(reduceMotion ? nil : .easeInOut(duration:0.45),value:Int(recording.elapsed))
+            } else { ProgressView().controlSize(.small) }
+            VStack(alignment:.leading,spacing:3) {
+                if !compact { Text(recording.phase.title).font(.system(size:11,weight:.medium)) }
+                Text(recording.clockText).font(.system(size:compact ? 12 : 22,weight:.semibold,design:.monospaced)).monospacedDigit()
+            }
+        }
+        .foregroundStyle(toolbarInk)
+        .accessibilityElement(children:.ignore)
+        .accessibilityLabel("\(recording.phase.title) \(recording.clockText)")
+    }
+}
+
+struct RecordingHUD: View {
+    @ObservedObject var recording: RecordingService
+    var stop: () -> Void
+
+    var body: some View {
+        HStack(spacing:16) {
+            RecordingReadout(recording:recording)
+            Spacer(minLength:8)
+            Button(action:stop) { Label("停止并保存",systemImage:"stop.fill").font(.system(size:12,weight:.semibold)).padding(.horizontal,12).padding(.vertical,9) }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(Color(red:0.68,green:0.08,blue:0.15),in:RoundedRectangle(cornerRadius:12))
+                .opacity(recording.isBusy ? 0.45 : 1)
+                .disabled(recording.isBusy)
+                .accessibilityLabel("停止录屏并保存")
+        }.padding(.horizontal,16).padding(.vertical,10)
+    }
+}
+
+private struct ToolbarRecordingStatus: View {
+    @ObservedObject var recording: RecordingService
+    var stop: () -> Void
+
+    var body: some View {
+        if recording.phase != .idle {
+            Button(action:stop) {
+                HStack(spacing:7) {
+                    RecordingReadout(recording:recording,compact:true)
+                    if recording.phase == .recording { Image(systemName:"stop.fill").font(.system(size:11)).foregroundStyle(.red) }
+                    else { Text(recording.phase == .starting ? "准备中" : "保存中").font(.system(size:10)) }
+                }.padding(.horizontal,9).padding(.vertical,7)
+            }
+            .buttonStyle(.plain)
+            .background(Color.red.opacity(0.09),in:RoundedRectangle(cornerRadius:11))
+            .disabled(recording.isBusy)
+            .help("\(recording.phase.title) · 点击停止并保存")
+            .accessibilityLabel("\(recording.phase.title) \(recording.clockText)，停止录屏")
+        }
+    }
+}
+
+private struct RecordingMenuAction: View {
+    @ObservedObject var recording: RecordingService
+    var action: () -> Void
+
+    var body: some View {
+        Button(recording.phase == .idle ? "开始录屏…" : (recording.phase == .recording ? "停止并保存录屏" : recording.phase.title),action:action)
+            .disabled(recording.isBusy)
+    }
 }
 
 struct ShortcutSettings: View {
@@ -158,6 +228,7 @@ struct AnnotationToolbar: View {
                 toolButton("arrow.uturn.forward","重做 ⇧⌘Z") { controller.redo() }.disabled(!document.canRedo)
                 toolButton("trash","清空批注") { controller.clear() }
                 Spacer(minLength:4)
+                ToolbarRecordingStatus(recording:controller.recording) { controller.toggleRecording() }
                 Menu {
                     ForEach(CanvasMode.allCases) { mode in Button(mode.title) { Task { await controller.begin(mode) } } }
                 } label: { Label(controller.mode.title,systemImage:controller.mode.symbol).font(.system(size:11,weight:.medium)) }.menuStyle(.borderlessButton).fixedSize()
@@ -166,7 +237,7 @@ struct AnnotationToolbar: View {
                     Button("复制截图 ⌘C") { Task { await controller.export(save:false) } }
                     Button("保存 PNG… ⌘S") { Task { await controller.export(save:true) } }
                     Button("区域截图…") { Task { await controller.snip() } }
-                    Button(controller.recording.isRecording ? "停止并保存录屏" : "开始录屏…") { controller.toggleRecording() }
+                    RecordingMenuAction(recording:controller.recording) { controller.toggleRecording() }
                     Divider()
                     Button(controller.lens ? "关闭放大镜" : "放大镜") { Task { await controller.setLens(!controller.lens) } }
                     Button(controller.spotlight ? "关闭聚光灯" : "聚光灯") { controller.spotlight.toggle() }
@@ -249,32 +320,5 @@ private struct ToolbarButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.95 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration:0.14),value:configuration.isPressed)
             .onHover { hovering = $0 }
-    }
-}
-
-struct BreakScreen: View {
-    @ObservedObject var controller: PresentationController
-    var body: some View {
-        ZStack {
-            LinearGradient(colors:[Color(red:0.02,green:0.08,blue:0.13),Color(red:0.03,green:0.24,blue:0.29),Color(red:0.08,green:0.12,blue:0.25)],startPoint:.topLeading,endPoint:.bottomTrailing)
-            Ellipse().fill(.cyan.opacity(0.15)).frame(width:700,height:400).blur(radius:100).offset(x:200,y:180)
-            VStack(spacing:34) {
-                Text("稍作休息").font(.system(size:22,weight:.medium)).tracking(8).foregroundStyle(.white.opacity(0.7))
-                HStack(spacing:26) {
-                    timerRing(Int(ceil(controller.breakRemaining))/3600,"小时",fraction:controller.breakRemaining/3600,color:.cyan)
-                    timerRing(Int(ceil(controller.breakRemaining))%3600/60,"分钟",fraction:controller.breakRemaining.truncatingRemainder(dividingBy:3600)/3600,color:.teal)
-                    timerRing(Int(ceil(controller.breakRemaining))%60,"秒",fraction:controller.breakRemaining.truncatingRemainder(dividingBy:60)/60,color:.mint)
-                }
-                Button("继续演示") { controller.endBreak() }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.85)).padding(.horizontal,24).padding(.vertical,12).modifier(GlassSurface(radius:30))
-            }
-            VStack { HStack { TimelineView(.periodic(from:.now,by:1)) { context in Text(context.date,style:.time).font(.system(size:14,weight:.medium,design:.monospaced)).foregroundStyle(.white.opacity(0.6)) };Spacer();Button { controller.endBreak() } label:{Image(systemName:"xmark").foregroundStyle(.white.opacity(0.7))}.buttonStyle(.plain) };Spacer() }.padding(30)
-        }.ignoresSafeArea()
-    }
-    func timerRing(_ value:Int,_ label:String,fraction:Double,color:Color)->some View {
-        ZStack {
-            Circle().stroke(.white.opacity(0.07),lineWidth:5)
-            Circle().trim(from:0,to:min(1,max(0,fraction))).stroke(color.opacity(0.8),style:StrokeStyle(lineWidth:5,lineCap:.round)).rotationEffect(.degrees(-90))
-            VStack(spacing:7) { Text(String(format:"%02d",value)).font(.system(size:54,weight:.light,design:.rounded)).monospacedDigit();Text(label).font(.system(size:12)).foregroundStyle(.white.opacity(0.5)) }.foregroundStyle(.white)
-        }.frame(width:165,height:165)
     }
 }

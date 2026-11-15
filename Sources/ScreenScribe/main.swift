@@ -42,9 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: ControlPanel(controller: controller))
         controller.closePanel = { [weak self] in self?.popover.performClose(nil) }
         controller.showPanel = { [weak self] in self?.openPanel() }
-        controller.recordingChanged = { [weak self] active in
-            self?.status.button?.image = NSImage(systemSymbolName: active ? "record.circle.fill" : "pencil.tip.crop.circle", accessibilityDescription: active ? "正在录屏" : "屏注")
-            self?.status.button?.contentTintColor = active ? .systemRed : nil
+        controller.recordingChanged = { [weak self] phase, clock in
+            guard let button = self?.status.button else { return }
+            button.image = NSImage(systemSymbolName: phase == .idle ? "pencil.tip.crop.circle" : (phase == .recording ? "record.circle.fill" : "hourglass"), accessibilityDescription: phase == .idle ? "屏注" : phase.title)
+            button.title = phase == .idle ? "" : " " + (phase == .starting ? "准备中" : (phase == .saving ? "保存中" : clock))
+            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+            button.contentTintColor = phase == .idle ? nil : (phase == .recording ? .systemRed : .systemOrange)
+            button.toolTip = phase == .idle ? "屏注 ScreenScribe" : "\(phase.title) · \(clock)"
+            button.setAccessibilityLabel(phase == .idle ? "屏注" : "\(phase.title) \(clock)")
         }
         controller.start()
         if !UserDefaults.standard.bool(forKey: "hasLaunched") {

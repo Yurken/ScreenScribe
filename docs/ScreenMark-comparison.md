@@ -16,7 +16,6 @@
 | Live Zoom / Follow Lens | 跟随指针的放大镜 | 未提供三个完整缩放模式 |
 | Snip 与 PNG | 画布及选区导出、剪贴板 | 导出包含批注；不含工具条 |
 | MP4 录制 | ScreenCaptureKit 视频与可选系统 / 麦克风音频，最高 4K / 30 fps | 需要系统权限；录制性能取决于分辨率与设备 |
-| Break Time | 休息倒计时 | 无 PIN 锁定和背景音乐 |
 | Hide Desktop | 壁纸覆盖层遮住桌面图标 | 不修改 Finder 偏好；动态壁纸按静态图像处理 |
 | iPhone / iPad Remote | 暂未实现 | 无配套 iOS 应用或网络远控服务 |
 | 自定义全局快捷键 | 设置中逐项录入组合键 | 提供占用提示；不保证参考产品全部快捷键可一一映射 |
@@ -28,11 +27,11 @@
 | 检查 | 结果 |
 | --- | --- |
 | Debug / Release 构建 | 通过，Apple Silicon arm64 |
-| 11 项 XCTest | 全部通过，含历史、几何、原生鼠标事件、文字内容与焦点、Retina 裁剪和像素遮挡方向 |
+| 22 项 XCTest | 覆盖历史、几何、原生鼠标事件、文字焦点、Retina 裁剪、像素遮挡、形状规整及录屏计时 |
 | ZIP 解压完整性 | 通过 |
 | 解压后 `codesign --verify --strict` | 通过，本机 ad-hoc 签名；未进行 Apple 公证 |
-| 原生应用交互 | 待真机验证；当前自动化环境在 `NSApplication.shared` 的系统应用注册阶段中止，未进入应用业务代码 |
-| GitHub Actions | 已配置，尚未在远程执行 |
+| 原生应用交互 | 已在本机验证权限、冻结、画线、形状规整、撤销及工具条可读性；其余场景按下方清单复核 |
+| GitHub Actions | 推送后自动执行，状态见 [Actions](https://github.com/Yurken/ScreenScribe/actions) |
 
 单元测试不能替代系统权限、真实输入法候选框、多显示器、视频声音、全屏应用与屏幕分享等交互验证。浏览器也无法运行原生 macOS 批注覆盖层。发布前应在真实 macOS 环境依次检查以下流程：
 
