@@ -4,7 +4,6 @@ import CoreMedia
 import ScreenCaptureKit
 
 enum CaptureError: LocalizedError {
-    case permissionDenied
     case displayUnavailable
     case microphoneDenied
     case recordingInProgress
@@ -14,7 +13,6 @@ enum CaptureError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied: return "请在系统设置 → 隐私与安全性 → 屏幕与系统音频录制中允许屏注，然后重新打开应用。"
         case .displayUnavailable: return "该显示器已断开，请重新选择显示器。"
         case .microphoneDenied: return "麦克风未获授权，请在系统设置 → 隐私与安全性 → 麦克风中允许屏注，或关闭麦克风录音。"
         case .recordingInProgress: return "已有录屏正在进行或保存中。"
@@ -28,11 +26,9 @@ enum CaptureError: LocalizedError {
 /// ScreenCaptureKit keeps all capture inside the process; no desktop images leave the Mac.
 @MainActor
 final class ScreenCaptureService {
-    static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
-
-    @discardableResult
-    static func requestPermission() -> Bool {
-        CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
+    static func isPermissionDenied(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == SCStreamErrorDomain && error.code == SCStreamError.Code.userDeclined.rawValue
     }
 
     var onLiveError: ((Error) -> Void)?
@@ -105,9 +101,10 @@ final class ScreenCaptureService {
 
     /// Display IDs, rather than origin comparisons, also work for displays left of or above the main display.
     static func makeFilter(screen: NSScreen, excluding windows: [NSWindow]) async throws -> SCContentFilter {
-        guard requestPermission() else { throw CaptureError.permissionDenied }
         // Include off-screen windows so a temporarily hidden toolbar remains excluded
         // when the presenter later opens it during this capture session.
+        // Let ScreenCaptureKit request and enforce its own authorization. A separate
+        // Core Graphics request can disagree with the capture API and re-prompt.
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
               let display = content.displays.first(where: { $0.displayID == displayID.uint32Value }) else {

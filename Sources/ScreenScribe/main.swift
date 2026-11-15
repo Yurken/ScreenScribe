@@ -62,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if popover.isShown { popover.performClose(nil) } else { openPanel() }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        openPanel()
+        return true
+    }
+
     private func openPanel() {
         guard let button = status.button else { return }
         NSApp.activate(ignoringOtherApps: true)

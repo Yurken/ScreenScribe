@@ -3,6 +3,7 @@ import SwiftUI
 import Combine
 import UniformTypeIdentifiers
 import ScreenScribeCore
+import OSLog
 
 enum CanvasMode: String, CaseIterable, Identifiable {
     case live, frozen, whiteboard, blackboard
@@ -59,6 +60,7 @@ final class PresentationController: ObservableObject {
     private var screenObserver: NSObjectProtocol?
     private var messageTask: Task<Void, Never>?
     private var lensRequest = UUID()
+    private let captureLogger = Logger(subsystem: "com.yurken.screenscribe", category: "Capture")
 
     func start() {
         if UserDefaults.standard.object(forKey: "autoFreeze") != nil { autoFreeze = UserDefaults.standard.bool(forKey: "autoFreeze") }
@@ -424,11 +426,26 @@ final class PresentationController: ObservableObject {
         messageTask = Task { try? await Task.sleep(nanoseconds: 4_000_000_000); if !Task.isCancelled { message = nil } }
     }
     private func reportCaptureError(_ error: Error) {
+        let details = error as NSError
+        captureLogger.error("Screen capture failed: \(details.domain, privacy: .public) (\(details.code))")
         let alert = NSAlert()
-        alert.messageText = "无法获取屏幕画面"
-        alert.informativeText = error.localizedDescription + "\n如尚未授权，请在系统设置的“隐私与安全性 → 屏幕与系统音频录制”中允许屏注，然后重新打开应用。"
-        alert.addButton(withTitle: "知道了"); alert.addButton(withTitle: "打开系统设置")
-        if alert.runModal() == .alertSecondButtonReturn { openScreenPermissionSettings() }
+        if ScreenCaptureService.isPermissionDenied(error) {
+            alert.messageText = "屏幕访问权限尚未生效"
+            alert.informativeText = "请在系统设置 → 隐私与安全 → 录屏与系统录音中允许 ScreenScribe，再完全退出并重新打开屏注。\n\n如果开关已打开，请移除列表中的旧 ScreenScribe，再点“＋”重新添加“应用程序”中的 ScreenScribe。旧构建的授权可能无法用于当前版本。\n\n实时批注、白板和黑板不需要此权限，可以先使用。"
+            alert.addButton(withTitle: "打开系统设置")
+            alert.addButton(withTitle: "暂用实时批注")
+            alert.addButton(withTitle: "取消")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: openScreenPermissionSettings()
+            case .alertSecondButtonReturn: Task { await begin(.live) }
+            default: break
+            }
+        } else {
+            alert.messageText = "无法获取屏幕画面"
+            alert.informativeText = error.localizedDescription
+            alert.addButton(withTitle: "好")
+            alert.runModal()
+        }
     }
     func openScreenPermissionSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
